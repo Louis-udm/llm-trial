@@ -1,0 +1,4 @@
+include mireml/statics/models/*.pkl
+include mireml/statics/resources/rfp_examples/*.pdf
+include mireml/statics/resources/rfp_examples/*.json
+include mireml/statics/resources/demo_for_requirements/*.pdf
