@@ -70,7 +70,6 @@ import random
 
 cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph.pkl"
 # wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer)
-# vocab_adj, vocab, vocab_indices, wgraph_id_to_tokenizer_id_map, tokenizer_id_to_wgraph_id_map=wgraph.adjacency_matrix,wgraph.vocab,wgraph.vocab_indices,wgraph.wgraph_id_to_tokenizer_id_map, wgraph.tokenizer_id_to_wgraph_id_map
 # with open(cola_wgraph_path, "wb") as f:
 #     dill.dump(wgraph,f)
 with open(cola_wgraph_path, "rb") as f:
@@ -104,17 +103,27 @@ model = tfr.AutoModelForSequenceClassification.from_pretrained(
 # model = tfr.AutoModel.from_pretrained(model_path)
 
 # example sentence to classify
-sentence = ["I really enjoyed this movie!", "It's a boring movie."]
+sentences = ["I really enjoyed this movie!", "A boring movie."]
 # sentence = "fdsheibif gjetrsg, suisfdsbewg monfjei, Je suis là! je suis à Montréal! C'est ce que je veux. J'ai vraiment apprécié ce film! C'est ça!"
 
 # tokenize sentence
 # DistilBertTokenizerFast
-inputs = tokenizer(sentence, return_tensors="pt")
+inputs = tokenizer(
+    sentences,
+    max_length=512,
+    # padding="max_length",
+    # padding="do_not_pad",
+    padding=True,
+    truncation=True,
+    return_tensors="pt",
+)
 print(inputs)
 ids = inputs["input_ids"].view(-1)
 print(ids.view(-1))
 print(tokenizer.convert_ids_to_tokens(ids))
 print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ids)))
+
+# 101 cls, 102 sep, 0 pad
 
 # # classify sentence
 outputs = model(**inputs)
