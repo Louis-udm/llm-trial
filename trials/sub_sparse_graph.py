@@ -20,10 +20,31 @@ def rand_adj():
     dense_adj=adj.to_dense()
     dense_adj[dense_adj>10]=0
     dense_adj.fill_diagonal_(1.)
-    adj=dense_adj.to_sparse_csr()
+    # adj=dense_adj.to_sparse_csr()
+    adj=dense_adj.to_sparse_coo()
     return adj
 
-adj=rand_adj()
+def zero_padding(adj):
+    if adj.layout is not torch.sparse_coo:
+        adj=adj.to_sparse_coo()
+    indices=adj.indices()+1
+    values=adj.values()
+    padded_adj= torch.sparse_coo_tensor(indices=indices, values=values, size=(adj.shape[0]+1,adj.shape[1]+1))
+    return padded_adj.coalesce()
+
+def check_zero_padding(adj) -> bool:
+    if adj.layout is not torch.sparse_coo:
+        adj=adj.to_sparse_coo()
+    if 0 in adj.indices():
+        return False
+    return True
+
+adj0=rand_adj()
+assert not check_zero_padding(adj0)
+adj=zero_padding(adj0)
+assert check_zero_padding(adj)
+torch.all(adj0.to_dense()==adj.to_dense()[1:,1:])
+g_size+=1
 pm(adj.to_dense())
 # adj_matrix = adj_matrix.coalesce()
 print(adj)
@@ -45,27 +66,27 @@ batch_size=x.shape[0]
 emb_size=5
 gout_size=4
 dense_adj=adj.to_dense()
-subgraph_mask=torch.zeros((batch_size,)+dense_adj.shape, dtype=torch.float32)
+batch_dense_mask=torch.zeros((batch_size,)+dense_adj.shape, dtype=torch.float32)
 # Compute row and column indices for each x in X
-row_idx = x.unsqueeze(-1).repeat(1, 1, subgraph_mask.size(-1))
+row_idx = x.unsqueeze(-1).repeat(1, 1, batch_dense_mask.size(-1))
 # Set values in G corresponding to row and column indices to 1
-subgraph_mask.scatter_(1, row_idx, 1)
+batch_dense_mask.scatter_(1, row_idx, 1)
 # col_idx = x.unsqueeze(-2).repeat(1, subgraph_mask.size(-2), 1)
 col_idx = row_idx.transpose(-1,-2)
-subgraph_mask.scatter_(2, col_idx, 1)
+batch_dense_mask.scatter_(2, col_idx, 1)
 
 one=torch.zeros_like(dense_adj, dtype=torch.float32)
 one[:,x[0]]=1
 one[x[0],:]=1
-assert torch.all(one==subgraph_mask[0])
+assert torch.all(one==batch_dense_mask[0])
 one=torch.zeros_like(dense_adj, dtype=torch.float32)
 one[:,x[1]]=1
 one[x[1],:]=1
-assert torch.all(one==subgraph_mask[1])
+assert torch.all(one==batch_dense_mask[1])
 
 # pm(zadj)
 print("--------------")
-ground_truth_dense_subadj=dense_adj*subgraph_mask
+ground_truth_dense_subadj=dense_adj*batch_dense_mask
 pm(ground_truth_dense_subadj[0])
 print("--------------")
 pm(ground_truth_dense_subadj[1])
@@ -122,7 +143,8 @@ assert torch.allclose(res1,res2)
 get batch_masks form input x according to adj_coo
 """
 batch_size=x.shape[0]
-adj_coo=adj.to_sparse_coo()
+adj_coo=adj.to_sparse_coo() if adj.layout is not torch.sparse_coo else adj
+
 batch_masks=torch.any(torch.any((adj_coo.indices().view(-1)==x.unsqueeze(-1)).view(batch_size,x.shape[1],2,-1), dim=1),dim=1)
 # mask is better than mask1
 mask1=torch.any(torch.any((adj_coo.indices().view(-1)==x.unsqueeze(-1)), dim=1).view(batch_size,2,-1), dim=1)
