@@ -64,7 +64,7 @@ y_prob_test = np.eye(len(y_test), len(label2idx))[y_test]
 
 # ----------------------------------
 
-from transformers.models.vgcn_bert.modeling_graph import WordGraph
+from transformers.models.vgcn_bert.modeling_graph import WordGraph,_normalize_adj
 
 import random
 
@@ -75,7 +75,7 @@ cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph.pkl"
 with open(cola_wgraph_path, "rb") as f:
     wgraph = dill.load(f)
 
-
+# Zero ratio before and after normalization is the same.
 print(
     "  Zero ratio(?>66%%) of the graph matrix: %.8f"
     % (
@@ -91,6 +91,28 @@ print(
     )
 )
 
+def compare_normalizations(adj):
+    # this is for compare the original adj and zero-padding adj, see if they are the same
+    # the result is the same
+    if adj[0,:].sum()==1:
+        adj1=adj.copy()
+        nadj1=_normalize_adj(adj1)
+        nadj2=_normalize_adj(adj.copy()[1:,1:])
+        adj3=adj.copy()
+        adj3[0,0]=0
+        nadj3=_normalize_adj(adj3)
+
+        # adding zero padding(add 0 row/col) for adj_matrix does not affect normalization
+        print(nadj2.sum()==nadj3.sum())
+        n1=nadj1.tocoo().copy()
+        n2=nadj2.tocoo().copy()
+        n3=nadj3.tocoo().copy()
+        print((n2.data==n3.data).all())
+    else:
+        print("adj already has zero padding.")
+
+compare_normalizations(wgraph.adjacency_matrix)
+
 torch_graph = wgraph.to_torch_sparse()
 
 # DistilBertForSequenceClassification
@@ -98,7 +120,6 @@ model = tfr.AutoModelForSequenceClassification.from_pretrained(
     model_path,
     [torch_graph],
     [wgraph.wgraph_id_to_tokenizer_id_map],
-    [wgraph.tokenizer_id_to_wgraph_id_map],
 )
 # model = tfr.AutoModel.from_pretrained(model_path)
 
