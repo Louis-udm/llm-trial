@@ -25,8 +25,8 @@ model_path = (
 
 # load tokenizer and model
 # tokenizer = tfr.VGCNBertTokenizerFast(
-# tokenizer = tfr.AutoTokenizer.from_pretrained(model_path)
-tokenizer = tfr.DistilBertTokenizerFast.from_pretrained(model_path)
+# tokenizer = tfr.DistilBertTokenizerFast.from_pretrained(model_path)
+tokenizer = tfr.AutoTokenizer.from_pretrained(model_path)
 
 
 ds_path = "../VGCN-BERT/data/CoLa"
@@ -152,4 +152,4 @@ predictions = outputs.logits.argmax(dim=1)
 
 # # print predicted label
 labels = ["negative", "positive"]
-print("Prediction:", labels[predictions])
+print("Prediction:", [labels[p] for p in predictions])
