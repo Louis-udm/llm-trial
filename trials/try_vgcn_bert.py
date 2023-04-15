@@ -13,8 +13,6 @@ import transformers as tfr
 random.seed(44)
 np.random.seed(44)
 
-valid_data_taux = 0.05
-test_data_taux = 0.10
 # set environment variable to use local models
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
@@ -25,13 +23,18 @@ model_path = (
 
 # load tokenizer and model
 # tokenizer = tfr.VGCNBertTokenizerFast(
-# tokenizer = tfr.DistilBertTokenizerFast.from_pretrained(model_path)
 tokenizer = tfr.AutoTokenizer.from_pretrained(model_path)
 
+""" 
+Load cola dataset
+"""
 
 ds_path = "../VGCN-BERT/data/CoLa"
 # train_valid_df=pd.read_csv(os.path.join(ds_path,"ds_train_valid.csv"), header=0, index_col=0)
 # test_df=pd.read_csv(os.path.join(ds_path,"ds_test.csv"))
+
+valid_data_taux = 0.05
+test_data_taux = 0.10
 
 label2idx = {"0": 0, "1": 1}
 idx2label = {0: "0", 1: "1"}
@@ -62,11 +65,11 @@ y_prob_train_valid = np.eye(len(y_train_valid), len(label2idx))[y_train_valid]
 y_prob_test = np.eye(len(y_test), len(label2idx))[y_test]
 
 
-# ----------------------------------
+"""
+build/Load wgraph
+"""
 
 from transformers.models.vgcn_bert.modeling_graph import WordGraph,_normalize_adj
-
-import random
 
 cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph.pkl"
 # wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer)
@@ -113,9 +116,12 @@ def compare_normalizations(adj):
 
 compare_normalizations(wgraph.adjacency_matrix)
 
+
+"""
+Init Model
+"""
 torch_graph = wgraph.to_torch_sparse()
 
-# DistilBertForSequenceClassification
 model = tfr.AutoModelForSequenceClassification.from_pretrained(
     model_path,
     [torch_graph],
