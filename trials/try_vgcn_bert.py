@@ -127,6 +127,7 @@ model = tfr.AutoModelForSequenceClassification.from_pretrained(
     [torch_graph],
     [wgraph.wgraph_id_to_tokenizer_id_map],
 )
+model.vgcn_bert.embeddings.vgcn.set_transparent_parameters()
 # model = tfr.AutoModel.from_pretrained(model_path)
 
 # example sentence to classify
@@ -159,3 +160,8 @@ predictions = outputs.logits.argmax(dim=1)
 # # print predicted label
 labels = ["negative", "positive"]
 print("Prediction:", [labels[p] for p in predictions])
+
+"""
+save weights
+"""
+# model.save_pretrained("/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased-rand")
