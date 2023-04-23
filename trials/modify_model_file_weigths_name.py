@@ -6,9 +6,8 @@ import torch
 # specify path to local model files
 model_path = "/tmp/local-huggingface-models/hf-maintainers_distilbert-base-uncased"
 
-new_model_path = (
-    "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
-)
+new_model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
+# new_model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased-all"
 
 
 # safetensors
@@ -25,7 +24,7 @@ for k,v in tensors.items():
     else:
         new_tensors[k]=v
 
-safe_save_file(new_tensors, path.join(new_model_path,"model.safetensors"), metadata={"format": "pt"})
+# safe_save_file(new_tensors, path.join(new_model_path,"model.safetensors"), metadata={"format": "pt"})
 
 
 # torch

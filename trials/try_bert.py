@@ -9,6 +9,7 @@ import transformers as tfr
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # specify path to local model files
+# model_path = "bert-base-uncased"
 model_path = "/tmp/local-huggingface-models/hf-maintainers_bert-base-uncased"
 
 # load tokenizer and model
