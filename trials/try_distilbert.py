@@ -11,6 +11,18 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 # specify path to local model files
 model_path = "/tmp/local-huggingface-models/hf-maintainers_distilbert-base-uncased"
 
+# from transformers import DistilBertModel, DistilBertTokenizer
+# tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
+# tokenizer.encode_plus(
+#     "test a sentence",
+#     add_special_tokens=True,
+#     max_length=512,
+#     pad_to_max_length=True,
+#     return_attention_mask=True,
+#     return_token_type_ids=True,
+#     return_tensors='pt',
+# )    
+
 # load tokenizer and model
 # DistilBertTokenizerFast
 tokenizer = tfr.AutoTokenizer.from_pretrained(model_path)
