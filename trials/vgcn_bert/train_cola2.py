@@ -7,10 +7,10 @@ import time
 import random
 import dill
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
 from sklearn.metrics import classification_report
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 
 import transformers as tfr
 from transformers import AdamW
@@ -77,6 +77,13 @@ y_test = test_df[1].values
 y_prob_train_valid = np.eye(len(y_train_valid), len(label2idx))[y_train_valid]
 y_prob_test = np.eye(len(y_test), len(label2idx))[y_test]
 
+text_train_list=train_valid_df[3][:train_size].tolist()
+text_valid_list=train_valid_df[3][train_size:].tolist()
+text_test_list=test_df[3].tolist()
+y_train=y_train_valid[:train_size]
+y_valid=y_train_valid[train_size:]
+y_prob_train=y_prob_train_valid[:train_size]
+y_prob_valid=y_prob_train_valid[train_size:]
 
 """
 build/Load wgraph
@@ -110,48 +117,25 @@ print(
 """
 Prepare dataset
 """
-class ColaDataset(Dataset):
-    def __init__(self, corpus, y, y_prob, tokenizer,max_len=512):
-        self.corpus = corpus
-        self.y = y
-        self.y_prob = y_prob
-        assert len(self.corpus) == len(self.y) == len(self.y_prob)
-        self.tokenizer = tokenizer
-        self.max_len = max_len
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, idx):
-        sentence = self.corpus.iloc[idx]
-        # sentence = self.corpus[idx]
-        y = self.y[idx]
-        y_prob = self.y_prob[idx]
-        # https://huggingface.co/transformers/v3.5.1/internal/tokenization_utils.html#transformers.tokenization_utils_base.PreTrainedTokenizerBase.encode_plus
-        # inputs = self.tokenizer.encode_plus(
-        #     text=sentence,
-        #     text_pair=None,
-        #     add_special_tokens=True,
-        #     max_length=self.max_len,
-        #     # pad_to_max_length=True,
-        #     padding="max_length",
-        #     # padding="longest",
-        #     # return_token_type_ids=True,
-        #     truncation=True,
-        #     return_tensors="pt",
-        # )
-        inputs = self.tokenizer(
-            text=sentence,
-            text_pair=None,
-            padding="max_length", 
-            max_length=self.max_len, 
-            truncation=True,
-            return_tensors="pt",
-        )
-        # inputs = {k: v.to(device) for k, v in inputs.items()}
-        # y = torch.tensor(y, dtype=torch.long).to(device)
-        # y_prob = torch.tensor(y_prob, dtype=torch.float).to(device)
-        return inputs,y,y_prob
+# Tokenize data and create DataLoader
+def tokenize_data(tokenizer, corpus,
+        y,
+        y_prob, max_len):
+    tokenized = tokenizer.batch_encode_plus(corpus,
+        truncation=True,
+        padding='max_length',
+        max_length=max_len,
+        return_tensors="pt",
+        return_attention_mask=True,
+    )
+    inputs = {
+        'input_ids': torch.tensor(tokenized['input_ids']),
+        'attention_mask': torch.tensor(tokenized['attention_mask']),
+        'y': y,
+        "y_prob":y_prob
+    }
+    dataset = TensorDataset(**inputs)
+    return dataset
     
 MAX_LEN = 512-16
 TRAIN_BATCH_SIZE = 2
@@ -162,10 +146,25 @@ DROPOUT_RATE = 0.2  # 0.5 # Dropout rate (1 - keep probability).
 L2_DECAY = 0.001
 DO_LOWER_CASE = True
 
-train_dataloader = DataLoader(dataset=ColaDataset(train_valid_df[3][:train_size], y_train_valid[:train_size], y_prob_train_valid[:train_size], tokenizer,MAX_LEN), batch_size=TRAIN_BATCH_SIZE, shuffle=False)
-valid_dataloader = DataLoader(dataset=ColaDataset(train_valid_df[3][train_size:], y_train_valid[train_size:], y_prob_train_valid[train_size:], tokenizer,MAX_LEN), batch_size=VALID_BATCH_SIZE, shuffle=False)
-test_dataloader = DataLoader(dataset=ColaDataset(test_df[3], y_test, y_prob_test, tokenizer,MAX_LEN), batch_size=VALID_BATCH_SIZE, shuffle=False)
+train_dataset = tokenize_data(tokenizer,text_train_list, y_train, y_prob_train, MAX_LEN)
+valid_dataset = tokenize_data(tokenizer,text_valid_list, y_valid, y_prob_valid, MAX_LEN)
+test_dataset = tokenize_data(tokenizer,text_test_list, y_test, y_prob_test, MAX_LEN)
 
+train_dataloader = DataLoader(
+    train_dataset,
+    sampler = RandomSampler(train_dataset),
+    batch_size = TRAIN_BATCH_SIZE
+)
+valid_dataloader = DataLoader(
+    valid_dataset,
+    sampler = SequentialSampler(valid_dataset),
+    batch_size = VALID_BATCH_SIZE
+)
+test_dataloader = DataLoader(
+    test_dataset,
+    sampler = SequentialSampler(test_dataset),
+    batch_size = VALID_BATCH_SIZE
+)
 """
 Init Model
 """
@@ -210,6 +209,7 @@ def evaluate(model, dataloader):
 
 def train(model, train_dataloader, valid_dataloader):
     for epoch in range(TOTAL_EPOCH):
+        start_time = time.time()
         model.train()
         total_loss = 0
         for step, batch in enumerate(train_dataloader):
