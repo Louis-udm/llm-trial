@@ -7,6 +7,7 @@ import time
 import random
 import dill
 import torch
+import argparse
 from torch.utils.data import Dataset, DataLoader
 
 from sklearn.metrics import classification_report
@@ -14,11 +15,23 @@ from sklearn.metrics import f1_score
 
 import transformers as tfr
 from transformers import AdamW
-from torch.optim import SparseAdam
+# from torch.optim import SparseAdam
 from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.models.vgcn_bert.modeling_graph import WordGraph,_normalize_adj
 
-print(f"Start Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+parser = argparse.ArgumentParser()
+# parser.add_argument('--ds', type=str, default='mr')
+# parser.add_argument('--load', type=int, default=0)
+# parser.add_argument('--sw', type=int, default='0')
+# parser.add_argument('--dim', type=int, default='16')
+parser.add_argument('--lr', type=float, default=5e-5)
+parser.add_argument('--l2', type=float, default=0.001)
+parser.add_argument('--model', type=str, default='vb')
+# parser.add_argument('--model', type=str, default='distilbert')
+args = parser.parse_args()
+
+print(f"\nStart Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+print(f"command line args: {args}")
 
 seed=44
 random.seed(seed)
@@ -28,6 +41,7 @@ torch.manual_seed(seed)
 cuda_yes = torch.cuda.is_available()
 if cuda_yes:
     torch.cuda.manual_seed_all(seed)
+# device="cpu"
 device = torch.device("cuda:0" if cuda_yes else "cpu")
 print(f"Random Seed: {seed}, Device: {device}")
 
@@ -35,9 +49,8 @@ print(f"Random Seed: {seed}, Device: {device}")
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # specify path to local model files
-model_path = (
-    "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
-)
+model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased" if args.model=='vb' else "/tmp/local-huggingface-models/hf-maintainers_distilbert-base-uncased"
+
 
 print(f"Model Path: {model_path} \nModel config:")
 with open(os.path.join(model_path, "config.json"), "rt") as f:
@@ -87,41 +100,6 @@ y_test = test_df[1].values
 y_prob_train_valid = np.eye(len(y_train_valid), len(label2idx))[y_train_valid]
 y_prob_test = np.eye(len(y_test), len(label2idx))[y_test]
 
-
-"""
-build/Load wgraph
-"""
-
-cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph_win1000_nosw_minifreq2.pkl"
-print(f"Word Graph Path: {cola_wgraph_path}")
-
-if os.path.exists(cola_wgraph_path):
-    with open(cola_wgraph_path, "rb") as f:
-        wgraph = dill.load(f)
-else:
-    window_size=1000
-    remove_stopwords=False
-    print(f"Build Word Graph, winidow_size={window_size}, remove_stopwords={remove_stopwords}")
-    wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer,window_size=window_size, remove_stopwords=remove_stopwords)
-    with open(cola_wgraph_path, "wb") as f:
-        dill.dump(wgraph,f)
-
-# Zero ratio before and after normalization is the same.
-print(
-    "  Zero ratio(?>66%%) of the graph matrix: %.8f"
-    % (
-        100
-        * (
-            1
-            - wgraph.adjacency_matrix.count_nonzero()
-            / (
-                wgraph.adjacency_matrix.shape[0]
-                * wgraph.adjacency_matrix.shape[1]
-            )
-        )
-    )
-)
-
 """
 Prepare dataset
 """
@@ -170,8 +148,10 @@ MAX_LEN = 512-16
 TRAIN_BATCH_SIZE = 32
 VALID_BATCH_SIZE = 32
 TOTAL_EPOCH = 9
-LEARNING_RATE = 5e-5 #1e-05 # 2e-5, 5e-5, old 8e-6
-L2_DECAY = 0.001
+# LEARNING_RATE = 5e-5 #1e-05 # 2e-5, 5e-5, old 8e-6
+LEARNING_RATE = args.lr
+# L2_DECAY = 0.001
+L2_DECAY = args.l2
 # DROPOUT_RATE = 0.2  # 0.5 # Dropout rate (1 - keep probability).
 # DO_LOWER_CASE = True
 print(f"\nTraining parameters: MAX_LEN: {MAX_LEN}, TRAIN_BATCH_SIZE: {TRAIN_BATCH_SIZE}, VALID_BATCH_SIZE: {VALID_BATCH_SIZE}, TOTAL_EPOCH: {TOTAL_EPOCH}, LEARNING_RATE: {LEARNING_RATE}, L2_DECAY: {L2_DECAY}")
@@ -202,18 +182,58 @@ test_dataloader = DataLoader(
     ), batch_size=VALID_BATCH_SIZE, shuffle=False)
 
 """
+build/Load wgraph
+"""
+if args.model=="vb":
+    cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph_win1000_nosw_minifreq2.pkl"
+    print(f"Word Graph Path: {cola_wgraph_path}")
+
+    if os.path.exists(cola_wgraph_path):
+        with open(cola_wgraph_path, "rb") as f:
+            wgraph = dill.load(f)
+    else:
+        window_size=1000
+        remove_stopwords=False
+        print(f"Build Word Graph, winidow_size={window_size}, remove_stopwords={remove_stopwords}")
+        wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer,window_size=window_size, remove_stopwords=remove_stopwords)
+        with open(cola_wgraph_path, "wb") as f:
+            dill.dump(wgraph,f)
+
+    torch_graph = wgraph.to_torch_sparse()
+
+    # Zero ratio before and after normalization is the same.
+    print(
+        "  Zero ratio(?>66%%) of the graph matrix: %.8f"
+        % (
+            100
+            * (
+                1
+                - wgraph.adjacency_matrix.count_nonzero()
+                / (
+                    wgraph.adjacency_matrix.shape[0]
+                    * wgraph.adjacency_matrix.shape[1]
+                )
+            )
+        )
+    )
+
+"""
 Init Model
 """
-torch_graph = wgraph.to_torch_sparse()
 
-# model = tfr.AutoModel.from_pretrained(model_path)
-model = tfr.AutoModelForSequenceClassification.from_pretrained(
-    model_path,
-    [torch_graph],
-    [wgraph.wgraph_id_to_tokenizer_id_map],
-)
-print(f"\nVGCN weights transparant setting:{(model.vgcn_bert.embeddings.vgcn.W_vh_list[0]==1).all()}")
-print(f"VGCN fc transparant setting:{(model.vgcn_bert.embeddings.vgcn.fc_hg.weight==1).all()}")
+if args.model=="vb":
+    model = tfr.AutoModelForSequenceClassification.from_pretrained(
+        model_path,
+        [torch_graph],
+        [wgraph.wgraph_id_to_tokenizer_id_map],
+    )
+else:
+    model = tfr.AutoModelForSequenceClassification.from_pretrained(model_path)
+    # model = tfr.AutoModel.from_pretrained(model_path)
+
+if isinstance(model,tfr.VGCNBertForSequenceClassification):
+    print(f"\nVGCN weights transparant setting:{(model.vgcn_bert.embeddings.vgcn.W_vh_list[0]==1).all()}")
+    print(f"VGCN fc transparant setting:{(model.vgcn_bert.embeddings.vgcn.fc_hg.weight==1).all()}")
 
 model.to(device)
 # model.vgcn_bert.embeddings.vgcn.set_transparent_parameters()
