@@ -18,15 +18,18 @@ from torch.optim import SparseAdam
 from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.models.vgcn_bert.modeling_graph import WordGraph,_normalize_adj
 
-random.seed(44)
-np.random.seed(44)
-torch.manual_seed(44)
+print(f"Start Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+
+seed=44
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
 cuda_yes = torch.cuda.is_available()
 if cuda_yes:
-    torch.cuda.manual_seed_all(44)
+    torch.cuda.manual_seed_all(seed)
 device = torch.device("cuda:0" if cuda_yes else "cpu")
-
+print(f"Random Seed: {seed}, Device: {device}")
 
 # set environment variable to use local models
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -36,6 +39,10 @@ model_path = (
     "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
 )
 
+print(f"Model Path: {model_path} \nModel config:")
+with open(os.path.join(model_path, "config.json"), "rt") as f:
+    print(f.read())
+
 # load tokenizer and model
 tokenizer = tfr.AutoTokenizer.from_pretrained(model_path)
 
@@ -44,9 +51,11 @@ Load cola dataset
 """
 
 ds_path = "./data/CoLA"
+print(f"\nDataset Path: {ds_path}")
 
 valid_data_taux = 0.05
 test_data_taux = 0.10
+print(f"Valid Data Taux: {valid_data_taux}, Test Data Taux: {test_data_taux}")
 
 label2idx = {"0": 0, "1": 1}
 idx2label = {0: "0", 1: "1"}
@@ -84,11 +93,16 @@ build/Load wgraph
 """
 
 cola_wgraph_path = "/tmp/vgcn-bert/cola_wgraph_win1000_nosw_minifreq2.pkl"
+print(f"Word Graph Path: {cola_wgraph_path}")
+
 if os.path.exists(cola_wgraph_path):
     with open(cola_wgraph_path, "rb") as f:
         wgraph = dill.load(f)
 else:
-    wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer,window_size=1000, remove_stopwords=False)
+    window_size=1000
+    remove_stopwords=False
+    print(f"Build Word Graph, winidow_size={window_size}, remove_stopwords={remove_stopwords}")
+    wgraph=WordGraph(rows=train_valid_df[3], tokenizer=tokenizer,window_size=window_size, remove_stopwords=remove_stopwords)
     with open(cola_wgraph_path, "wb") as f:
         dill.dump(wgraph,f)
 
@@ -153,13 +167,14 @@ class ColaDataset(Dataset):
         return inputs,y,y_prob
     
 MAX_LEN = 512-16
-TRAIN_BATCH_SIZE = 2
+TRAIN_BATCH_SIZE = 32
 VALID_BATCH_SIZE = 32
 TOTAL_EPOCH = 9
 LEARNING_RATE = 5e-5 #1e-05 # 2e-5, 5e-5, old 8e-6
-DROPOUT_RATE = 0.2  # 0.5 # Dropout rate (1 - keep probability).
 L2_DECAY = 0.001
-DO_LOWER_CASE = True
+# DROPOUT_RATE = 0.2  # 0.5 # Dropout rate (1 - keep probability).
+# DO_LOWER_CASE = True
+print(f"\nTraining parameters: MAX_LEN: {MAX_LEN}, TRAIN_BATCH_SIZE: {TRAIN_BATCH_SIZE}, VALID_BATCH_SIZE: {VALID_BATCH_SIZE}, TOTAL_EPOCH: {TOTAL_EPOCH}, LEARNING_RATE: {LEARNING_RATE}, L2_DECAY: {L2_DECAY}")
 
 train_dataloader = DataLoader(
     dataset=ColaDataset(
@@ -197,6 +212,9 @@ model = tfr.AutoModelForSequenceClassification.from_pretrained(
     [torch_graph],
     [wgraph.wgraph_id_to_tokenizer_id_map],
 )
+print(f"\nVGCN weights transparant setting:{(model.vgcn_bert.embeddings.vgcn.W_vh_list[0]==1).all()}")
+print(f"VGCN fc transparant setting:{(model.vgcn_bert.embeddings.vgcn.fc_hg.weight==1).all()}")
+
 model.to(device)
 # model.vgcn_bert.embeddings.vgcn.set_transparent_parameters()
 
@@ -213,19 +231,21 @@ def evaluate(model, dataloader):
     for batch in dataloader:
         inputs, y, y_prob = batch
         inputs = {k: v.to(device) for k, v in inputs.items()}
+        y=y.to(device)
         with torch.no_grad():
             outputs:SequenceClassifierOutput = model(**inputs, labels=y)
             # loss, logits, hidden_states, attentions = outputs
         # logits = outputs.logits.detach().cpu().numpy()
         # label_ids = y.to("cpu").numpy()
-        total_loss += outputs.loss.item()
+        if y is not None:
+            total_loss += outputs.loss.item()
+            total_y.append(y.to("cpu").numpy())
         _, pred_y = torch.max(outputs.logits, -1)
-        total_preds.append(pred_y.tolist())
-        total_y.append(y.tolist())
-    avg_loss = total_loss / len(dataloader)
+        total_preds.append(pred_y.cpu().numpy())
+    total_y = np.concatenate(total_y, axis=0) if total_y else None
     total_preds = np.concatenate(total_preds, axis=0)
-    total_y = np.concatenate(total_y, axis=0)
-    return avg_loss, total_preds, total_y
+    avg_loss = total_loss / len(dataloader)
+    return total_preds, total_y, avg_loss
 
 
 def train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer):
@@ -249,48 +269,43 @@ def train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer)
             total_loss += outputs.loss.item()
             if step % 40 == 0:
                 print(
-                    "Epoch:{}-{}/{}, Train Loss: {}, Cumulated time: {}m ".format(
-                        epoch,
-                        step,
-                        len_train_ds,
-                        outputs.loss.item(),
-                        (time.time() - train_start) / 60.0,
-                    )
+                    f"Epoch:{epoch}-{step}/{len_train_ds}, Batch Train Loss: {outputs.loss.item():.6f}, Cumulated time: {(time.time() - train_start) / 60.0:.2f}m "
                 )
+            # break
+
         avg_train_loss = total_loss / len_train_ds
         evaluate_t0=time.time()
-        avg_valid_loss, y_preds, y = evaluate(model, valid_dataloader)
+        y_preds, y, avg_valid_loss = evaluate(model, valid_dataloader)
         valid_f1=f1_score(y,y_preds,average="weighted")
-        print("--------------------------------------------------------------")
-        print("  Average training loss: {0:.2f}".format(avg_train_loss))
-        print("  Average valid loss: {0:.2f}".format(avg_valid_loss))
-        print("  Average valid F1: {0:.2f}".format(valid_f1))
-        print("  Valid evaluation took: {:}".format(format_time(time.time() - evaluate_t0)))
+        print(f"---------------------------Epoch {epoch} finished----------------------------")
+        print(f"  Avg training loss: {avg_train_loss:.6f}, Avg valid loss: {avg_valid_loss:.6f}")
+        print(f"  Avg valid F1: {valid_f1:.5f}, Valid evaluation took: {(time.time() - evaluate_t0)/60.0:.2f}m")
 
         test_t0=time.time()
-        avg_test_loss, y_preds, y = evaluate(model, test_dataloader)
+        y_preds, y, avg_test_loss = evaluate(model, test_dataloader)
         test_f1=f1_score(y,y_preds,average="weighted")
-        print("  Average test loss: {0:.2f}".format(avg_test_loss))
-        print("  Average test F1: {0:.2f}".format(test_f1))
-        print("  Test evaluation took: {:}".format(format_time(time.time() - test_t0)))
+        print(f"  Avg test F1: {test_f1:.5f}, Avg test loss: {avg_test_loss:.6f}, Test evaluation took: {(time.time() - test_t0)/60.0:.2f}m")
         
         all_loss_list["train"].append(avg_train_loss)
         all_loss_list["valid"].append(avg_valid_loss)
         all_loss_list["test"].append(avg_test_loss)
         all_f1_list["valid"].append(valid_f1)
         all_f1_list["test"].append(test_f1)
+        # break
 
     best_valid_f1 = max(all_f1_list["valid"])
     idx_best_valid_f1 = all_f1_list["valid"].index(best_valid_f1)
-    print(f"\n**Optimization Finished!,Total spend: {format_time(time.time() - train_start)}")
+    print(f"\n**Optimization Finished!,Total spend: {(time.time() - train_start)/60.0:0.2f}m")
     print("**Best Valid weighted F1: %.3f at %d epoch."% (100 * best_valid_f1, idx_best_valid_f1))
     print("**Test weighted F1 when valid best: %.3f" % (100 * all_f1_list["test"][idx_best_valid_f1]))
 
 
 
-# optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
-optimizer = SparseAdam(model.parameters(), lr=LEARNING_RATE, eps=1e-8)
+optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=L2_DECAY)
+# optimizer = SparseAdam(model.parameters(), lr=LEARNING_RATE, eps=1e-8)
+print(f"\nTring start Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
 train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer)
+print(f"\nTring End Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
 
 """
 Test
@@ -300,36 +315,37 @@ Test
 """
 Examples
 """
-# example sentence to classify
-sentences = ["I really enjoyed this movie!", "A boring movie."]
-# sentence = "fdsheibif gjetrsg, suisfdsbewg monfjei, Je suis là! je suis à Montréal! C'est ce que je veux. J'ai vraiment apprécié ce film! C'est ça!"
+def try_examples():
+    print("\n\nTry examples:")
+    # randomly select 10 samples from test_df
+    sample_indices = np.random.randint(0, len(test_df), 10)
+    sample_sentences = test_df.iloc[sample_indices][3].tolist()
+    sample_y=y_test[sample_indices]
 
-# tokenize sentence
-# DistilBertTokenizerFast
-inputs = tokenizer(
-    sentences,
-    max_length=512,
-    # padding="max_length",
-    # padding="do_not_pad",
-    padding=True,
-    truncation=True,
-    return_tensors="pt",
-)
-print(inputs)
-ids = inputs["input_ids"].view(-1)
-print(ids.view(-1))
-# 101 cls, 102 sep, 0 pad
-print(tokenizer.convert_ids_to_tokens(ids))
-print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ids)))
 
-# # classify sentence
-inputs = {k: v.to(device) for k, v in inputs.items()}
-outputs = model(**inputs)
-predictions = outputs.logits.argmax(dim=1)
+    sample_inputs = tokenizer(
+        sample_sentences,
+        max_length=MAX_LEN,
+        # padding="max_length",
+        # padding="do_not_pad",
+        padding=True,
+        truncation=True,
+        return_tensors="pt",
+    )
+    # print(sample_inputs)
+    sample_ids = sample_inputs["input_ids"].view(-1)
+    # print(sample_ids.view(-1))
+    # 101 cls, 102 sep, 0 pad
+    # print(tokenizer.convert_ids_to_tokens(sample_ids))
+    print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(sample_ids)))
 
-# # print predicted label
-labels = ["negative", "positive"]
-print("Prediction:", [labels[p] for p in predictions])
+    # classify sentence
+    sample_inputs = {k: v.to(device) for k, v in sample_inputs.items()}
+    outputs = model(**sample_inputs)
+    predictions = outputs.logits.argmax(dim=1)
+    print("\n".join([f"p:{p} - y:{y}  {s}" for p,y,s in zip(predictions,sample_y,sample_sentences)]))
+
+try_examples()
 
 """
 save weights
