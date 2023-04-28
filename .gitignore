@@ -48,6 +48,7 @@ throttle.ctrl
 *.py[cod]
 
 # Log files
+log/
 *.log
 
 # Environment files
