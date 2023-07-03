@@ -50,10 +50,7 @@ print(f"Random Seed: {seed}, Device: {device}")
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # specify path to local model files
-model_path = (
-    "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased" if args.model=='vb' 
-    else "/tmp/local-huggingface-models/hf-maintainers_distilbert-base-uncased"
-)
+model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
               
 
 
@@ -188,63 +185,52 @@ test_dataloader = DataLoader(
     ), batch_size = VALID_BATCH_SIZE, shuffle = False)
 
 """
-build/Load wgraph
+Load wgraph
 """
-if args.model=="vb":
-    cola_wgraph_path = "/tmp/vgcn-bert/wgraphs/cola_wgraph_win1000_nosw_minifreq2.pkl"
-    print(f"Word Graph Path: {cola_wgraph_path}")
+cola_wgraph_path = "/tmp/vgcn-bert/wgraphs/cola_wgraph_win1000_nosw_minifreq2.pkl"
+print(f"Word Graph Path: {cola_wgraph_path}")
 
-    if os.path.exists(cola_wgraph_path):
-        with open(cola_wgraph_path, "rb") as f:
-            wgraph = dill.load(f)
-    else:
-        window_size=1000
-        remove_stopwords = False
-        print(f"Build Word Graph, winidow_size={window_size}, remove_stopwords={remove_stopwords}")
-        wgraph = WordGraph(
-            rows = train_valid_df[3], 
-            tokenizer = tokenizer,
-            window_size = window_size, 
-            remove_stopwords = remove_stopwords
-        )
-        with open(cola_wgraph_path, "wb") as f:
-            dill.dump(wgraph, f)
+with open(cola_wgraph_path, "rb") as f:
+    wgraph = dill.load(f)
 
-    torch_graph = wgraph.to_torch_sparse()
-
-    # Zero ratio before and after normalization is the same.
-    print(
-        "  Zero ratio(?>66%%) of the graph matrix: %.8f"
-        % (
-            100
-            * (
-                1
-                - wgraph.adjacency_matrix.count_nonzero()
-                / (
-                    wgraph.adjacency_matrix.shape[0]
-                    * wgraph.adjacency_matrix.shape[1]
-                )
-            )
-        )
-    )
+torch_graph = wgraph.to_torch_sparse()
 
 """
 Init Model
 """
+from os import path
+state_dict=torch.load(path.join("/tmp/vgcn-bert/model_savings/cola_vb","pytorch_model.bin")) #,map_location=torch.device('cpu'))
+print(state_dict["vgcn_bert.embeddings.vgcn.wgraphs.0"].is_coalesced())
+torch_graph.values()[1]=11
+print(torch_graph.values()[1])
 
-if args.model=="vb":
-    model = tfr.AutoModelForSequenceClassification.from_pretrained(
-        model_path,
-        [torch_graph],
-        [wgraph.wgraph_id_to_tokenizer_id_map],
-    )
-else:
-    model = tfr.AutoModelForSequenceClassification.from_pretrained(model_path)
-    # model = tfr.AutoModel.from_pretrained(model_path)
+# from torch import nn
+# testp=nn.Parameter(torch_graph.coalesce(), requires_grad=False)
+# print(testp.is_coalesced())
+# torch.save(testp, "/tmp/vgcn-bert/model_savings/cola_vb/testp.pt")
+# testp_state_dict=torch.load("/tmp/vgcn-bert/model_savings/cola_vb/testp.pt")
+# print(testp_state_dict.is_coalesced())
 
-if isinstance(model, tfr.VGCNBertForSequenceClassification):
-    print(f"\nVGCN weights transparant setting:{(model.vgcn_bert.embeddings.vgcn.W_vh_list[0]==1).all()}")
-    print(f"VGCN fc transparant setting:{(model.vgcn_bert.embeddings.vgcn.fc_hg.weight==1).all()}")
+
+model = tfr.AutoModelForSequenceClassification.from_pretrained(
+    "/tmp/vgcn-bert/model_savings/cola_vb",
+    # model_path,
+    # [torch_graph],
+    # [wgraph.wgraph_id_to_tokenizer_id_map],
+)
+
+# model.vgcn_bert.set_wgraphs([torch_graph], [wgraph.wgraph_id_to_tokenizer_id_map])
+# model.vgcn_bert.set_wgraphs([torch_graph], [wgraph.wgraph_id_to_tokenizer_id_map],"normal")
+
+print("correct value:",model.vgcn_bert.embeddings.vgcn.wgraphs[0].values()[1])
+print("correct vh value:",model.vgcn_bert.embeddings.vgcn.W_vh_list[0][1][1])
+# assert model.vgcn_bert.embeddings.vgcn.wgraphs[0].values()[1]!=torch_graph.values()[1]
+
+print("model wgraph is_coalesced:",model.vgcn_bert.embeddings.vgcn.wgraphs[0].is_coalesced())
+
+print(f"\nVGCN weights transparant setting:{(model.vgcn_bert.embeddings.vgcn.W_vh_list[0]==1).all()}")
+print(f"VGCN fc transparant setting:{(model.vgcn_bert.embeddings.vgcn.fc_hg.weight==1).all()}")
+print("\n".join([a for a in model.state_dict().keys() if a.startswith("vgcn_bert.embeddings.vgcn")]))
 
 model.to(device)
 # model.vgcn_bert.embeddings.vgcn.set_transparent_parameters()
@@ -344,19 +330,22 @@ def train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer,
 model_save_path = f"{args.saving_path_prefix}_{args.model}"
 print(f"Model saving path: {model_save_path}")
 
-train_start = time.time()
-optimizer = AdamW(model.parameters(), lr = LEARNING_RATE, weight_decay = L2_DECAY)
-# optimizer = SparseAdam(model.parameters(), lr = LEARNING_RATE, eps=1e-8)
-print(f"\nTraining start Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
-all_loss_list, all_f1_list = train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer,model_save_path)
-print(f"\nGPU memory usage: {get_gpu_memory_usage():.2f} MB")
-print(f"\nTraining End Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
+# train_start = time.time()
+# optimizer = AdamW(model.parameters(), lr = LEARNING_RATE, weight_decay = L2_DECAY)
+# print(f"\nTraining start Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
+# all_loss_list, all_f1_list = train(model, train_dataloader, valid_dataloader, test_dataloader, optimizer,model_save_path)
+# print(f"\nGPU memory usage: {get_gpu_memory_usage():.2f} MB")
+# print(f"\nTraining End Datetime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
 
-best_valid_f1 = max(all_f1_list["valid"])
-idx_best_valid_f1 = all_f1_list["valid"].index(best_valid_f1)
-print(f"\nOptimization Finished! Total spend: {(time.time() - train_start)/60.0:0.2f}m")
-print("Final best valid weighted F1: %.3f at %d epoch."% (100 * best_valid_f1, idx_best_valid_f1))
-print("Final test weighted F1 when best valid: %.3f" % (100 * all_f1_list["test"][idx_best_valid_f1]))
+# best_valid_f1 = max(all_f1_list["valid"])
+# idx_best_valid_f1 = all_f1_list["valid"].index(best_valid_f1)
+# print(f"\nOptimization Finished! Total spend: {(time.time() - train_start)/60.0:0.2f}m")
+# print("Final best valid weighted F1: %.3f at %d epoch."% (100 * best_valid_f1, idx_best_valid_f1))
+# print("Final test weighted F1 when best valid: %.3f" % (100 * all_f1_list["test"][idx_best_valid_f1]))
+
+y_preds, y, avg_test_loss = evaluate(model, test_dataloader)
+test_f1=f1_score(y, y_preds, average="weighted")
+print("Final test weighted F1 when best valid: %.3f" % (100 * test_f1))
 
 """
 Test

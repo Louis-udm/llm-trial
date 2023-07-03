@@ -5,6 +5,7 @@ import torch
 
 # specify path to local model files
 model_path = "/tmp/local-huggingface-models/hf-maintainers_distilbert-base-uncased"
+# model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
 
 new_model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased"
 # new_model_path = "/tmp/local-huggingface-models/zhibinlu_vgcn-distilbert-base-uncased-all"
@@ -28,8 +29,9 @@ for k,v in tensors.items():
 
 
 # torch
-# state_dict=torch.load(path.join(model_path,"pytorch_model.bin"),map_location=torch.device('cpu'))
+# model_path="/tmp/vgcn-bert/model_savings/cola_vb"
+state_dict=torch.load(path.join(model_path,"pytorch_model.bin"),map_location=torch.device('cpu'))
 # torch.save(new_state_dict, path.join(new_model_path,"pytorch_model.bin"))
 
-print(tensors)
+print(state_dict)
 

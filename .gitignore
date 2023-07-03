@@ -9,6 +9,8 @@ build/
 *.egg-info/
 .eggs/
 
+downloads/
+
 # trying codes
 # trying/
 
