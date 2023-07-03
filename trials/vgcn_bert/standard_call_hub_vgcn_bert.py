@@ -5,8 +5,7 @@ import transformers as tfr
 tokenizer = tfr.AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
 # Load VGCN-BERT model
-from transformers.models.vgcn_bert.modeling_vgcn_bert import VGCNBertModel
-model = VGCNBertModel.from_pretrained(
+model = tfr.AutoModel.from_pretrained(
     "zhibinlu/vgcn-bert-distilbert-base-uncased", trust_remote_code=True,
     # # if you already have WordGraphs (torch sparse) and their id_maps,
     # # you can directly instantiate VGCN-BERT model with your WGraphs (support multiple graphs)
@@ -32,3 +31,4 @@ model.set_wgraphs([wgraph], [wgraph_id_to_tokenizer_id_map])
 text = "Replace me by any text you'd like."
 encoded_input = tokenizer(text, return_tensors="pt")
 output = model(**encoded_input)
+print(output.last_hidden_state.shape)
